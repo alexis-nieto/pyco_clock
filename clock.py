@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout
 )
-from PySide6.QtCore import Qt, QTimer, QSize, QPoint, QPointF # QPointF is needed for the fix
+from PySide6.QtCore import Qt, QTimer, QSize, QPoint
 from PySide6.QtGui import QFont, QColor, QPalette, QCursor
 
 class MinimalClock(QWidget):
@@ -44,9 +44,8 @@ class MinimalClock(QWidget):
         top_bar_layout.setContentsMargins(0, 0, 0, 0)
         top_bar_layout.addStretch() 
 
-        # Create Close Button (Small 'X')
-        self.close_button = QPushButton("X")
-        self.close_button.setFixedSize(20, 20)
+        # Create Close Button (Dynamic size set in update_font_size)
+        self.close_button = QPushButton("x")
         self.close_button.setFont(QFont("Helvetica", 10, QFont.Bold))
         self.close_button.setStyleSheet(f"background-color: transparent; color: {self.FG_COLOR.name()}; border: none;")
         self.close_button.clicked.connect(self.close)
@@ -79,17 +78,26 @@ class MinimalClock(QWidget):
         self.update_font_size()
 
     def update_font_size(self):
+        """Dynamically adjusts both the main clock font and the close button size."""
         height = self.height()
         if height > 0:
+            # 1. Time Label Font Size
             new_font_size = int(height * 0.5) 
             if new_font_size < 12:
                 new_font_size = 12
             font = QFont("Helvetica", new_font_size, QFont.Bold)
             self.time_label.setFont(font)
+
+            # 2. Close Button Resizing Logic
+            button_size = max(20, int(height * 0.2)) 
+            button_font_size = max(8, int(height * 0.15))
+            
+            self.close_button.setFixedSize(button_size, button_size)
+            self.close_button.setFont(QFont("Helvetica", button_font_size, QFont.Bold))
             
     # --- Custom Resizing Logic ---
 
-    def get_resize_edge(self, pos: QPoint): # Type hint is now QPoint
+    def get_resize_edge(self, pos: QPoint): 
         """Determines if the mouse is near an edge or corner for resizing."""
         x, y = pos.x(), pos.y()
         w, h = self.width(), self.height()
@@ -110,9 +118,8 @@ class MinimalClock(QWidget):
         """Handles both starting a drag and starting a resize."""
         if event.button() == Qt.LeftButton:
             self.old_pos = event.globalPosition().toPoint()
-            
-            # ** FIX 1: Replace event.pos() with event.position().toPoint() **
-            local_pos = event.position().toPoint()
+            # Use event.position().toPoint() for modern Qt (removes deprecation warning)
+            local_pos = event.position().toPoint() 
             self._resizing_edge = self.get_resize_edge(local_pos)
             event.accept()
 
@@ -132,7 +139,7 @@ class MinimalClock(QWidget):
         
         # 2. Handle Cursor Hover (Setting the cursor shape)
         else:
-            # ** FIX 2: Replace event.pos() with event.position().toPoint() **
+            # Use event.position().toPoint() for modern Qt (removes deprecation warning)
             local_pos = event.position().toPoint()
             edge = self.get_resize_edge(local_pos)
             
@@ -170,6 +177,7 @@ class MinimalClock(QWidget):
         
         new_x, new_y, new_w, new_h = rect.x(), rect.y(), rect.width(), rect.height()
 
+        # Initial size and position calculation based on drag direction
         if self._resizing_edge in [Qt.Edge.LeftEdge, Qt.Corner.TopLeftCorner, Qt.Corner.BottomLeftCorner]:
             new_x += delta.x()
             new_w -= delta.x()
@@ -188,20 +196,32 @@ class MinimalClock(QWidget):
         new_w = max(new_w, self.minimumWidth())
         new_h = max(new_h, self.minimumHeight())
         
-        # --- Apply Aspect Ratio Lock ---
+        # --- Apply Aspect Ratio Lock (Fixes Diagonal Tweaking) ---
         current_ratio = new_w / new_h
         
         if abs(current_ratio - self.ASPECT_RATIO) > 0.01:
-            # Logic to maintain aspect ratio (unchanged from previous version)
-            if self._resizing_edge in [Qt.Edge.TopEdge, Qt.Edge.BottomEdge]:
+            
+            # 1. Check if we are dragging a corner (where the issue occurs)
+            if self._resizing_edge in [Qt.Corner.TopLeftCorner, Qt.Corner.TopRightCorner, Qt.Corner.BottomLeftCorner, Qt.Corner.BottomRightCorner]:
+                
+                # 2. Determine which change was greater: horizontal or vertical
+                abs_delta_x = abs(delta.x())
+                abs_delta_y = abs(delta.y())
+                
+                # 3. Use the larger change to guide the aspect lock
+                if abs_delta_x > abs_delta_y:
+                    # User is trying to adjust WIDTH primarily -> Adjust height
+                    new_h = int(new_w / self.ASPECT_RATIO)
+                else:
+                    # User is trying to adjust HEIGHT primarily -> Adjust width
+                    new_w = int(new_h * self.ASPECT_RATIO)
+            
+            # [Original Edge Logic (Horizontal/Vertical)]
+            elif self._resizing_edge in [Qt.Edge.TopEdge, Qt.Edge.BottomEdge]:
                 new_w = int(new_h * self.ASPECT_RATIO)
             elif self._resizing_edge in [Qt.Edge.LeftEdge, Qt.Edge.RightEdge]:
                  new_h = int(new_w / self.ASPECT_RATIO)
-            elif self._resizing_edge in [Qt.Corner.TopLeftCorner, Qt.Corner.TopRightCorner, Qt.Corner.BottomLeftCorner, Qt.Corner.BottomRightCorner]:
-                 if current_ratio > self.ASPECT_RATIO:
-                     new_w = int(new_h * self.ASPECT_RATIO)
-                 else:
-                     new_h = int(new_w / self.ASPECT_RATIO)
+
 
         # Final move/resize
         self.setGeometry(new_x, new_y, new_w, new_h)
@@ -212,6 +232,7 @@ class MinimalClock(QWidget):
         height = self.height()
         current_ratio = width / height
 
+        # If the aspect ratio is off and we are NOT actively resizing (for external resizes)
         if abs(current_ratio - self.ASPECT_RATIO) > 0.01 and self._resizing_edge is None:
             new_width = int(height * self.ASPECT_RATIO)
             self.resize(new_width, height)
@@ -228,6 +249,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     clock = MinimalClock()
     
+    # Center the window on the screen
     screen_geometry = app.primaryScreen().geometry()
     x = (screen_geometry.width() - clock.width()) // 2
     y = (screen_geometry.height() - clock.height()) // 2
