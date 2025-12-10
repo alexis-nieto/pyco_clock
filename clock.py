@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout
 )
-from PySide6.QtCore import Qt, QTimer, QSize, QPoint
+from PySide6.QtCore import Qt, QTimer, QSize, QPoint, QPointF # QPointF is needed for the fix
 from PySide6.QtGui import QFont, QColor, QPalette, QCursor
 
 class MinimalClock(QWidget):
@@ -24,7 +24,7 @@ class MinimalClock(QWidget):
         self.init_timer()
 
     def init_ui(self):
-        # 1. Window Flags and Appearance
+        # 1. Window Flags and Appearance (Frameless, Always-On-Top)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | 
             Qt.WindowType.WindowStaysOnTopHint
@@ -36,22 +36,21 @@ class MinimalClock(QWidget):
         
         # 2. Main Layout
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5) # Small padding
+        main_layout.setContentsMargins(5, 5, 5, 5) 
         main_layout.setSpacing(0)
         
         # 3. Top Row (For the Close Button)
         top_bar_layout = QHBoxLayout()
         top_bar_layout.setContentsMargins(0, 0, 0, 0)
-        top_bar_layout.addStretch() # Pushes the button to the right
+        top_bar_layout.addStretch() 
 
         # Create Close Button (Small 'X')
-        self.close_button = QPushButton("x")
+        self.close_button = QPushButton("X")
         self.close_button.setFixedSize(20, 20)
         self.close_button.setFont(QFont("Helvetica", 10, QFont.Bold))
         self.close_button.setStyleSheet(f"background-color: transparent; color: {self.FG_COLOR.name()}; border: none;")
         self.close_button.clicked.connect(self.close)
         
-        # Add button to the top layout
         top_bar_layout.addWidget(self.close_button)
         main_layout.addLayout(top_bar_layout)
         
@@ -60,7 +59,6 @@ class MinimalClock(QWidget):
         self.time_label.setAlignment(Qt.AlignCenter)
         self.time_label.setStyleSheet(f"color: {self.FG_COLOR.name()};")
         
-        # Add time label to the main layout
         main_layout.addWidget(self.time_label)
 
         # 5. Final Setup
@@ -83,15 +81,15 @@ class MinimalClock(QWidget):
     def update_font_size(self):
         height = self.height()
         if height > 0:
-            new_font_size = int(height * 0.5) # Using 0.5 to account for the top bar
+            new_font_size = int(height * 0.5) 
             if new_font_size < 12:
                 new_font_size = 12
             font = QFont("Helvetica", new_font_size, QFont.Bold)
             self.time_label.setFont(font)
             
-    # --- Custom Resizing Logic (Refined for stability) ---
+    # --- Custom Resizing Logic ---
 
-    def get_resize_edge(self, pos):
+    def get_resize_edge(self, pos: QPoint): # Type hint is now QPoint
         """Determines if the mouse is near an edge or corner for resizing."""
         x, y = pos.x(), pos.y()
         w, h = self.width(), self.height()
@@ -113,8 +111,9 @@ class MinimalClock(QWidget):
         if event.button() == Qt.LeftButton:
             self.old_pos = event.globalPosition().toPoint()
             
-            # Check if we are starting a resize operation
-            self._resizing_edge = self.get_resize_edge(event.pos())
+            # ** FIX 1: Replace event.pos() with event.position().toPoint() **
+            local_pos = event.position().toPoint()
+            self._resizing_edge = self.get_resize_edge(local_pos)
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -127,18 +126,19 @@ class MinimalClock(QWidget):
             if self._resizing_edge is not None:
                 self.perform_resize(delta)
             else:
-                # Perform standard dragging
                 self.move(self.pos() + delta)
                 
             self.old_pos = event.globalPosition().toPoint()
         
         # 2. Handle Cursor Hover (Setting the cursor shape)
         else:
-            edge = self.get_resize_edge(event.pos())
+            # ** FIX 2: Replace event.pos() with event.position().toPoint() **
+            local_pos = event.position().toPoint()
+            edge = self.get_resize_edge(local_pos)
+            
             if edge is not None:
                 self.setCursor(self.cursor_for_edge(edge))
             else:
-                # Only reset cursor if no buttons are pressed AND we are not over the button
                 self.setCursor(Qt.CursorShape.ArrowCursor) 
 
         event.accept()
@@ -168,7 +168,6 @@ class MinimalClock(QWidget):
         """Calculates and applies the new size and position based on the drag delta."""
         rect = self.geometry()
         
-        # Initial geometry changes
         new_x, new_y, new_w, new_h = rect.x(), rect.y(), rect.width(), rect.height()
 
         if self._resizing_edge in [Qt.Edge.LeftEdge, Qt.Corner.TopLeftCorner, Qt.Corner.BottomLeftCorner]:
@@ -190,23 +189,15 @@ class MinimalClock(QWidget):
         new_h = max(new_h, self.minimumHeight())
         
         # --- Apply Aspect Ratio Lock ---
-        
         current_ratio = new_w / new_h
         
         if abs(current_ratio - self.ASPECT_RATIO) > 0.01:
-            # Prioritize the dimension that was primarily dragged for the aspect lock
-            
-            # If resizing Top/Bottom (primarily changing height)
+            # Logic to maintain aspect ratio (unchanged from previous version)
             if self._resizing_edge in [Qt.Edge.TopEdge, Qt.Edge.BottomEdge]:
                 new_w = int(new_h * self.ASPECT_RATIO)
-                
-            # If resizing Left/Right (primarily changing width)
             elif self._resizing_edge in [Qt.Edge.LeftEdge, Qt.Edge.RightEdge]:
                  new_h = int(new_w / self.ASPECT_RATIO)
-
-            # If resizing a corner, adjust the one that needs the least change
             elif self._resizing_edge in [Qt.Corner.TopLeftCorner, Qt.Corner.TopRightCorner, Qt.Corner.BottomLeftCorner, Qt.Corner.BottomRightCorner]:
-                 # Decide whether to prioritize width or height based on the current ratio
                  if current_ratio > self.ASPECT_RATIO:
                      new_w = int(new_h * self.ASPECT_RATIO)
                  else:
@@ -216,17 +207,12 @@ class MinimalClock(QWidget):
         self.setGeometry(new_x, new_y, new_w, new_h)
 
 
-    # --- Aspect Ratio Enforcement for external resize (e.g., maximizing) ---
     def resizeEvent(self, event):
-        """Called whenever the widget is resized."""
-        
         width = self.width()
         height = self.height()
         current_ratio = width / height
 
-        # If the aspect ratio is off and we are NOT actively resizing
         if abs(current_ratio - self.ASPECT_RATIO) > 0.01 and self._resizing_edge is None:
-            # Simple fix: adjust width based on height for stability
             new_width = int(height * self.ASPECT_RATIO)
             self.resize(new_width, height)
         
@@ -242,7 +228,6 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     clock = MinimalClock()
     
-    # Center the window on the screen
     screen_geometry = app.primaryScreen().geometry()
     x = (screen_geometry.width() - clock.width()) // 2
     y = (screen_geometry.height() - clock.height()) // 2
